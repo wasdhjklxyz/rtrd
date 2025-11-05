@@ -2,6 +2,8 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/gfp_types.h>
+#include <linux/skbuff.h>
 
 MODULE_LICENSE("GPL-2.0");
 
@@ -31,9 +33,47 @@ static int rtrd_stop(struct net_device *dev)
 	return 0;
 }
 
+static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+	struct rtrd_priv *priv = netdev_priv(dev);
+	struct sk_buff *rx_skb;
+
+	RTRD_DBG("TX packet len=%u", skb->len);
+
+	priv->stats.tx_packets++;
+	priv->stats.tx_bytes += skb->len;
+	dev->stats.tx_packets++;
+	dev->stats.tx_bytes += skb->len;
+
+	/*
+	 * Clone the packet and "receive" it back
+	 * This makes the interface work like a loopback
+	 */
+	rx_skb = skb_clone(skb, GFP_ATOMIC);
+	if (rx_skb) {
+		rx_skb->dev = dev;
+		rx_skb->protocol = eth_type_trans(rx_skb, dev);
+		rx_skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+		netif_rx(rx_skb);
+
+		priv->stats.rx_packets++;
+		priv->stats.rx_bytes += skb->len;
+		dev->stats.rx_packets++;
+		dev->stats.rx_bytes += skb->len;
+
+		RTRD_DBG("RX looped packet back");
+	}
+
+	dev_kfree_skb(skb);
+
+	return NETDEV_TX_OK;
+}
+
 static const struct net_device_ops rtrd_netdev_ops = {
 	.ndo_open = rtrd_open,
 	.ndo_stop = rtrd_stop,
+	.ndo_start_xmit = rtrd_start_xmit,
 };
 
 static void rtrd_probe(struct net_device *dev)
