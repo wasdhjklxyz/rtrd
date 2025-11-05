@@ -1,5 +1,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/netdevice.h>
 
 MODULE_LICENSE("GPL-2.0");
 
@@ -9,15 +10,35 @@ MODULE_LICENSE("GPL-2.0");
 		       __LINE__, __func__, ##__VA_ARGS__);             \
 	} while (0)
 
-static int rtrd_init(void)
+static struct net_device *rtrd_dev;
+
+static int __init rtrd_init(void)
 {
-	RTRD_DBG("hello world");
+	int ret;
+
+	rtrd_dev = alloc_netdev(0, "rtrd%d", NET_NAME_UNKNOWN, NULL);
+	if (!rtrd_dev) {
+		RTRD_DBG("alloc_netdev failed");
+		return -ENOMEM; /* FIXME: This is just assumption */
+	}
+
+	ret = register_netdev(rtrd_dev);
+	if (ret < 0) {
+		RTRD_DBG("register_netdev failed: %d", ret);
+		free_netdev(rtrd_dev);
+		return -ret;
+	}
+
+	RTRD_DBG("registered as %s", rtrd_dev->name);
 	return 0;
 }
 
-static void rtrd_exit(void)
+static void __exit rtrd_exit(void)
 {
-	RTRD_DBG("goodbye");
+	if (rtrd_dev) {
+		unregister_netdev(rtrd_dev);
+		free_netdev(rtrd_dev);
+	}
 }
 
 module_init(rtrd_init);
