@@ -5,7 +5,7 @@ MODULE_LICENSE("GPL-2.0");
 
 static int rtrd_init(void)
 {
-	printk(KERN_ALERT "rtrd world\n");
+	printk(KERN_ALERT "hello world\n");
 	return 0;
 }
 
