@@ -1,6 +1,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
+#include <linux/etherdevice.h>
 
 MODULE_LICENSE("GPL-2.0");
 
@@ -12,11 +13,27 @@ MODULE_LICENSE("GPL-2.0");
 
 static struct net_device *rtrd_dev;
 
-static const struct net_device_ops rtrd_netdev_ops = {};
-
 struct rtrd_priv {
 	struct net_device_stats stats;
 	spinlock_t lock;
+};
+
+static int rtrd_open(struct net_device *dev)
+{
+	eth_hw_addr_set(dev, "\0RTRD"); /* Set fake MAC address */
+	netif_start_queue(dev);
+	return 0;
+}
+
+static int rtrd_stop(struct net_device *dev)
+{
+	netif_stop_queue(dev);
+	return 0;
+}
+
+static const struct net_device_ops rtrd_netdev_ops = {
+	.ndo_open = rtrd_open,
+	.ndo_stop = rtrd_stop,
 };
 
 static void rtrd_probe(struct net_device *dev)
