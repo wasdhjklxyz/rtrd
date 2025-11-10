@@ -23,7 +23,7 @@ struct rtrd_priv {
 
 static int rtrd_open(struct net_device *dev)
 {
-	eth_hw_addr_set(dev, "\0RTRD"); /* Set fake MAC address */
+	eth_hw_addr_set(dev, "\0RTRD\0"); /* Set fake MAC address */
 	netif_start_queue(dev);
 	return 0;
 }
