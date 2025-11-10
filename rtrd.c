@@ -80,11 +80,7 @@ static void rtrd_probe(struct net_device *dev)
 
 	dev->netdev_ops = &rtrd_netdev_ops;
 
-	/*
-	 * IFF_NOARP: We're not using ARP
-	 * IFF_POINTOPOINT: This is a tunnel, not broadcast medium
-	 */
-	dev->flags |= IFF_NOARP | IFF_POINTOPOINT;
+	dev->flags |= IFF_NOARP; /* We're not using ARP */
 	dev->flags &= ~IFF_BROADCAST; /* Not a broadcast device */
 
 	/* We handle our own checksums */
