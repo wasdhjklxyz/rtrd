@@ -4,7 +4,6 @@
 #include <linux/etherdevice.h>
 #include <linux/gfp_types.h>
 #include <linux/skbuff.h>
-#include <linux/skbuff.h>
 
 MODULE_LICENSE("GPL-2.0");
 
@@ -85,6 +84,9 @@ static void rtrd_probe(struct net_device *dev)
 
 	/* We handle our own checksums */
 	dev->features |= NETIF_F_HW_CSUM | NETIF_F_HIGHDMA;
+
+	/* Don't bother locking device we'll handle that */
+	dev->lltx = true;
 
 	/* Disable header caching - we're not a real Ethernet */
 	dev->header_ops = NULL;
