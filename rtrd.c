@@ -4,6 +4,10 @@
 #include <linux/etherdevice.h>
 #include <linux/gfp_types.h>
 #include <linux/skbuff.h>
+#include <linux/if_arp.h>
+#include <linux/netdevice.h>
+#include <net/ip_tunnels.h>
+#include <net/rtnetlink.h>
 
 MODULE_LICENSE("GPL-2.0");
 
@@ -12,8 +16,6 @@ MODULE_LICENSE("GPL-2.0");
 		printk(KERN_DEBUG "[%s:%d] %s(): " fmt "\n", __FILE__, \
 		       __LINE__, __func__, ##__VA_ARGS__);             \
 	} while (0)
-
-static struct net_device *rtrd_dev;
 
 struct rtrd_priv {
 	struct net_device_stats stats;
@@ -122,70 +124,71 @@ static const struct net_device_ops rtrd_netdev_ops = {
 	.ndo_get_stats64 = rtrd_get_stats64,
 };
 
-static void rtrd_probe(struct net_device *dev)
-{
-	struct rtrd_priv *priv;
+static const struct device_type rtrd_device_type = { .name = KBUILD_MODNAME };
 
-	ether_setup(dev);
+static void rtrd_setup(struct net_device *dev)
+{
+	struct rtrd_priv *priv = netdev_priv(dev);
+	enum {
+		RTRD_NETDEV_FEATURES = NETIF_F_HW_CSUM | NETIF_F_RXCSUM |
+				       NETIF_F_HIGHDMA | NETIF_F_SG
+	};
 
 	dev->netdev_ops = &rtrd_netdev_ops;
-
-	dev->flags |= IFF_NOARP; /* We're not using ARP */
-	dev->flags &= ~IFF_BROADCAST; /* Not a broadcast device */
-
-	/* We handle our own checksums */
-	dev->features |= NETIF_F_HW_CSUM | NETIF_F_HIGHDMA;
-
-	/* Don't bother locking device we'll handle that */
+	dev->header_ops = &ip_tunnel_header_ops;
+	dev->hard_header_len = 0;
+	dev->addr_len = 0;
+	dev->type = ARPHRD_NONE;
+	dev->flags = IFF_POINTOPOINT | IFF_NOARP;
+	dev->priv_flags = IFF_NO_QUEUE;
+	dev->features |= RTRD_NETDEV_FEATURES;
+	dev->hw_features |= RTRD_NETDEV_FEATURES;
+	dev->hw_enc_features |= RTRD_NETDEV_FEATURES;
 	dev->lltx = true;
-
-	/* Disable header caching - we're not a real Ethernet */
-	dev->header_ops = NULL;
-
-	/* WireGuard uses 1420 to fit in Ethernet */
 	dev->mtu = 1420;
 
-	priv = netdev_priv(dev);
+	SET_NETDEV_DEVTYPE(dev, &rtrd_device_type);
+
 	memset(priv, 0, sizeof(struct rtrd_priv));
+}
+
+static int rtrd_newlink(struct net *src_net, struct net_device *dev,
+			struct nlattr *tb[], struct nlattr *data[],
+			struct netlink_ext_ack *extack)
+{
+	struct rtrd_priv *priv = netdev_priv(dev);
+
 	spin_lock_init(&priv->lock);
 	skb_queue_head_init(&priv->rx_queue);
+	netif_napi_add(dev, &priv->napi, rtrd_poll);
+
+	return register_netdevice(dev);
 }
+
+static void rtrd_dellink(struct net_device *dev, struct list_head *head)
+{
+	struct rtrd_priv *priv = netdev_priv(dev);
+
+	netif_napi_del(&priv->napi);
+	unregister_netdevice_queue(dev, head);
+}
+
+static struct rtnl_link_ops rtrd_link_ops = {
+	.kind = KBUILD_MODNAME,
+	.priv_size = sizeof(struct rtrd_priv),
+	.setup = rtrd_setup,
+	.newlink = rtrd_newlink,
+	.dellink = rtrd_dellink,
+};
 
 static int __init rtrd_init(void)
 {
-	int ret;
-	struct rtrd_priv *priv;
-
-	rtrd_dev = alloc_netdev(sizeof(struct rtrd_priv), "rtrd%d",
-				NET_NAME_UNKNOWN, rtrd_probe);
-	if (!rtrd_dev) {
-		RTRD_DBG("alloc_netdev failed");
-		return -ENOMEM; /* FIXME: This is just assumption */
-	}
-
-	priv = netdev_priv(rtrd_dev);
-	netif_napi_add(rtrd_dev, &priv->napi, rtrd_poll);
-
-	ret = register_netdev(rtrd_dev);
-	if (ret < 0) {
-		RTRD_DBG("register_netdev failed: %d", ret);
-		free_netdev(rtrd_dev);
-		return -ret;
-	}
-
-	RTRD_DBG("registered as %s", rtrd_dev->name);
-	return 0;
+	return rtnl_link_register(&rtrd_link_ops);
 }
 
 static void __exit rtrd_exit(void)
 {
-	struct rtrd_priv *priv = netdev_priv(rtrd_dev);
-
-	if (rtrd_dev) {
-		netif_napi_del(&priv->napi);
-		unregister_netdev(rtrd_dev);
-		free_netdev(rtrd_dev);
-	}
+	rtnl_link_unregister(&rtrd_link_ops);
 }
 
 module_init(rtrd_init);
