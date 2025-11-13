@@ -6,9 +6,11 @@
 #include <linux/if_arp.h>
 #include <linux/netdevice.h>
 #include <linux/mutex.h>
+#include <linux/icmp.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 #include <net/ip.h>
+#include <net/icmp.h>
 
 MODULE_LICENSE("GPL v2");
 
@@ -45,9 +47,46 @@ static int rtrd_stop(struct net_device *dev)
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct iphdr *iph = ip_hdr(skb);
+	struct sk_buff *rx_skb;
+	struct icmphdr *icmph;
+	__be32 tmp_addr;
 
 	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
 		 &iph->saddr, &iph->daddr, skb->len);
+
+	/* NOTE: Only for educational purposes - this sucks */
+	rx_skb = skb_clone(skb, GFP_ATOMIC);
+	if (rx_skb) {
+		tmp_addr = iph->saddr;
+		iph->saddr = iph->daddr;
+		iph->daddr = tmp_addr;
+
+		ip_send_check(iph);
+
+		if (iph->protocol == IPPROTO_ICMP) {
+			icmph = icmp_hdr(skb);
+			RTRD_DBG("ICMP");
+			if (icmph->type == ICMP_ECHO) {
+				icmph->type = ICMP_ECHOREPLY;
+				icmph->checksum = 0;
+				icmph->checksum = ip_compute_csum(
+					icmph, skb->len - ip_hdrlen(skb));
+				RTRD_DBG("ICMP ECHO");
+			}
+		}
+
+		rx_skb->dev = dev;
+		rx_skb->protocol = htons(ETH_P_IP);
+		rx_skb->pkt_type = PACKET_HOST;
+		rx_skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+		skb_reset_mac_header(rx_skb);
+		skb_reset_network_header(rx_skb);
+
+		netif_rx(rx_skb);
+
+		RTRD_DBG("RX: Injected reply packet");
+	}
 
 	dev_kfree_skb(skb);
 
