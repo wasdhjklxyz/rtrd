@@ -18,7 +18,6 @@ MODULE_LICENSE("GPL v2");
 	} while (0)
 
 struct rtrd_priv {
-	struct net_device_stats stats;
 	spinlock_t lock;
 	struct napi_struct napi;
 	struct sk_buff_head rx_queue;
@@ -39,9 +38,6 @@ static int rtrd_poll(struct napi_struct *napi, int budget)
 
 		skb->protocol = eth_type_trans(skb, napi->dev);
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
-
-		priv->stats.rx_packets++;
-		priv->stats.rx_bytes += skb->len;
 
 		napi_gro_receive(napi, skb);
 		work_done++;
@@ -87,9 +83,6 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	RTRD_DBG("TX sk_buff len=%u", skb->len);
 
-	priv->stats.tx_packets++;
-	priv->stats.tx_bytes += skb->len;
-
 	rx_skb = skb_clone(skb, GFP_ATOMIC);
 	if (rx_skb) {
 		skb_orphan(rx_skb);
@@ -102,26 +95,10 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 }
 
-static void rtrd_get_stats64(struct net_device *dev,
-			     struct rtnl_link_stats64 *stats)
-{
-	struct rtrd_priv *priv = netdev_priv(dev);
-
-	stats->rx_packets = priv->stats.rx_packets;
-	stats->tx_packets = priv->stats.tx_packets;
-	stats->rx_bytes = priv->stats.rx_bytes;
-	stats->tx_bytes = priv->stats.tx_bytes;
-	stats->rx_errors = priv->stats.rx_errors;
-	stats->tx_errors = priv->stats.tx_errors;
-	stats->rx_dropped = priv->stats.rx_dropped;
-	stats->tx_dropped = priv->stats.tx_dropped;
-}
-
 static const struct net_device_ops rtrd_netdev_ops = {
 	.ndo_open = rtrd_open,
 	.ndo_stop = rtrd_stop,
 	.ndo_start_xmit = rtrd_start_xmit,
-	.ndo_get_stats64 = rtrd_get_stats64,
 };
 
 static const struct device_type rtrd_device_type = { .name = KBUILD_MODNAME };
