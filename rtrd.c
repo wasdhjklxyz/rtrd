@@ -6,6 +6,7 @@
 #include <linux/skbuff.h>
 #include <linux/if_arp.h>
 #include <linux/netdevice.h>
+#include <linux/mutex.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 
@@ -18,7 +19,7 @@ MODULE_LICENSE("GPL v2");
 	} while (0)
 
 struct rtrd_priv {
-	spinlock_t lock;
+	struct mutex lock;
 	struct napi_struct napi;
 	struct sk_buff_head rx_queue;
 };
@@ -135,7 +136,7 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
 
-	spin_lock_init(&priv->lock);
+	mutex_init(&priv->lock);
 	skb_queue_head_init(&priv->rx_queue);
 	netif_napi_add(dev, &priv->napi, rtrd_poll);
 
