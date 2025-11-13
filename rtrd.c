@@ -1,7 +1,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
-#include <linux/etherdevice.h>
 #include <linux/gfp_types.h>
 #include <linux/skbuff.h>
 #include <linux/if_arp.h>
@@ -56,11 +55,8 @@ static int rtrd_poll(struct napi_struct *napi, int budget)
 static int rtrd_open(struct net_device *dev)
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
-	static const u8 mac[ETH_ALEN] = { 0x00, 0x52, 0x54, 0x52, 0x44, 0x00 };
 
-	eth_hw_addr_set(dev, mac);
 	napi_enable(&priv->napi);
-
 	netif_carrier_on(dev);
 	netif_start_queue(dev);
 
