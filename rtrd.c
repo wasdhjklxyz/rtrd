@@ -19,7 +19,6 @@ MODULE_LICENSE("GPL v2");
 
 struct rtrd_priv {
 	struct mutex lock;
-	struct sk_buff_head rx_queue;
 };
 
 static int rtrd_open(struct net_device *dev)
@@ -40,17 +39,6 @@ static int rtrd_stop(struct net_device *dev)
 
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct sk_buff *rx_skb;
-	struct rtrd_priv *priv = netdev_priv(dev);
-
-	RTRD_DBG("TX sk_buff len=%u", skb->len);
-
-	rx_skb = skb_clone(skb, GFP_ATOMIC);
-	if (rx_skb) {
-		skb_orphan(rx_skb);
-		skb_queue_tail(&priv->rx_queue, rx_skb);
-	}
-
 	dev_kfree_skb(skb);
 
 	return NETDEV_TX_OK;
@@ -97,7 +85,6 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 	struct rtrd_priv *priv = netdev_priv(dev);
 
 	mutex_init(&priv->lock);
-	skb_queue_head_init(&priv->rx_queue);
 
 	return register_netdevice(dev);
 }
