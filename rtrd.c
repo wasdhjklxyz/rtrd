@@ -9,7 +9,7 @@
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 
-MODULE_LICENSE("GPL-2.0");
+MODULE_LICENSE("GPL v2");
 
 #define RTRD_DBG(fmt, ...)                                             \
 	do {                                                           \
