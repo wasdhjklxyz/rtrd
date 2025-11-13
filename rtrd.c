@@ -8,6 +8,7 @@
 #include <linux/mutex.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
+#include <net/ip.h>
 
 MODULE_LICENSE("GPL v2");
 
@@ -23,6 +24,8 @@ struct rtrd_priv {
 
 static int rtrd_open(struct net_device *dev)
 {
+	RTRD_DBG("Device opened: %s", dev->name);
+
 	netif_carrier_on(dev);
 	netif_start_queue(dev);
 
@@ -31,6 +34,8 @@ static int rtrd_open(struct net_device *dev)
 
 static int rtrd_stop(struct net_device *dev)
 {
+	RTRD_DBG("Device stopped: %s", dev->name);
+
 	netif_carrier_off(dev);
 	netif_stop_queue(dev);
 
@@ -39,6 +44,11 @@ static int rtrd_stop(struct net_device *dev)
 
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct iphdr *iph = ip_hdr(skb);
+
+	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
+		 &iph->saddr, &iph->daddr, skb->len);
+
 	dev_kfree_skb(skb);
 
 	return NETDEV_TX_OK;
@@ -86,11 +96,15 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 
 	mutex_init(&priv->lock);
 
+	RTRD_DBG("Creating new device: %s", dev->name);
+
 	return register_netdevice(dev);
 }
 
 static void rtrd_dellink(struct net_device *dev, struct list_head *head)
 {
+	RTRD_DBG("Deleting device: %s", dev->name);
+
 	unregister_netdevice_queue(dev, head);
 }
 
@@ -104,12 +118,23 @@ static struct rtnl_link_ops rtrd_link_ops = {
 
 static int __init rtrd_init(void)
 {
-	return rtnl_link_register(&rtrd_link_ops);
+	int ret;
+
+	ret = rtnl_link_register(&rtrd_link_ops);
+	if (ret < 0) {
+		printk(KERN_ERR "rtrd: Failed to register rtnl link ops\n");
+		return ret;
+	}
+
+	RTRD_DBG("Module loaded");
+
+	return 0;
 }
 
 static void __exit rtrd_exit(void)
 {
 	rtnl_link_unregister(&rtrd_link_ops);
+	RTRD_DBG("Module unloaded");
 }
 
 module_init(rtrd_init);
