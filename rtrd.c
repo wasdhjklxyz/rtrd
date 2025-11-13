@@ -19,44 +19,11 @@ MODULE_LICENSE("GPL v2");
 
 struct rtrd_priv {
 	struct mutex lock;
-	struct napi_struct napi;
 	struct sk_buff_head rx_queue;
 };
 
-static int rtrd_poll(struct napi_struct *napi, int budget)
-{
-	int work_done = 0;
-	struct rtrd_priv *priv = container_of(napi, struct rtrd_priv, napi);
-
-	while (work_done < budget) {
-		struct sk_buff *skb = skb_dequeue(&priv->rx_queue);
-		if (!skb) {
-			break;
-		}
-
-		RTRD_DBG("RX sk_buff len=%d", skb->len);
-
-		skb->protocol = eth_type_trans(skb, napi->dev);
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-
-		napi_gro_receive(napi, skb);
-		work_done++;
-	}
-
-	if (work_done < budget) {
-		napi_complete_done(napi, work_done);
-	}
-
-	RTRD_DBG("Poll done, work_done=%d", work_done);
-
-	return work_done;
-}
-
 static int rtrd_open(struct net_device *dev)
 {
-	struct rtrd_priv *priv = netdev_priv(dev);
-
-	napi_enable(&priv->napi);
 	netif_carrier_on(dev);
 	netif_start_queue(dev);
 
@@ -65,11 +32,9 @@ static int rtrd_open(struct net_device *dev)
 
 static int rtrd_stop(struct net_device *dev)
 {
-	struct rtrd_priv *priv = netdev_priv(dev);
-
-	napi_disable(&priv->napi);
 	netif_carrier_off(dev);
 	netif_stop_queue(dev);
+
 	return 0;
 }
 
@@ -84,7 +49,6 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (rx_skb) {
 		skb_orphan(rx_skb);
 		skb_queue_tail(&priv->rx_queue, rx_skb);
-		napi_schedule(&priv->napi);
 	}
 
 	dev_kfree_skb(skb);
@@ -134,16 +98,12 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 
 	mutex_init(&priv->lock);
 	skb_queue_head_init(&priv->rx_queue);
-	netif_napi_add(dev, &priv->napi, rtrd_poll);
 
 	return register_netdevice(dev);
 }
 
 static void rtrd_dellink(struct net_device *dev, struct list_head *head)
 {
-	struct rtrd_priv *priv = netdev_priv(dev);
-
-	netif_napi_del(&priv->napi);
 	unregister_netdevice_queue(dev, head);
 }
 
