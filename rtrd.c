@@ -27,6 +27,7 @@ MODULE_LICENSE("GPL v2");
 struct rtrd_priv {
 	struct mutex lock;
 	struct net *net;
+	struct socket *sock;
 };
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
@@ -51,7 +52,6 @@ static int rtrd_socket_init(struct rtrd_priv *priv)
 		.local_udp_port = htons(RTRD_PORT),
 		.use_udp_checksums = true,
 	};
-	struct socket *sock = NULL;
 
 	mutex_lock(&priv->lock);
 
@@ -62,15 +62,15 @@ static int rtrd_socket_init(struct rtrd_priv *priv)
 		goto out;
 	}
 
-	ret = udp_sock_create(net, &port, &sock);
+	ret = udp_sock_create(net, &port, &priv->sock);
 	if (ret < 0) {
 		RTRD_DBG("Could not create socket");
 		goto out;
 	}
-	sock->sk->sk_allocation = GFP_ATOMIC;
-	sock->sk->sk_sndbuf = INT_MAX;
-	sk_set_memalloc(sock->sk);
-	setup_udp_tunnel_sock(net, sock, &cfg);
+	priv->sock->sk->sk_allocation = GFP_ATOMIC;
+	priv->sock->sk->sk_sndbuf = INT_MAX;
+	sk_set_memalloc(priv->sock->sk);
+	setup_udp_tunnel_sock(net, priv->sock, &cfg);
 
 	ret = 0;
 out:
@@ -108,10 +108,19 @@ static int rtrd_stop(struct net_device *dev)
 
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct socket *sock;
+
 	struct iphdr *iph = ip_hdr(skb);
+	struct rtrd_priv *priv = netdev_priv(dev);
 
 	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
 		 &iph->saddr, &iph->daddr, skb->len);
+
+	sock = priv->sock;
+	if (!sock) {
+		RTRD_DBG("Socket not initialized");
+		return -ENOENT;
+	}
 
 	dev_kfree_skb(skb);
 
