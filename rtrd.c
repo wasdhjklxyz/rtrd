@@ -82,6 +82,8 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		skb_reset_mac_header(rx_skb);
 		skb_reset_network_header(rx_skb);
 
+		skb_dst_drop(rx_skb);
+
 		netif_rx(rx_skb);
 
 		RTRD_DBG("RX: Injected reply packet");
