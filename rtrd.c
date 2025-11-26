@@ -6,11 +6,17 @@
 #include <linux/if_arp.h>
 #include <linux/netdevice.h>
 #include <linux/mutex.h>
+#include <linux/in.h>
+#include <linux/udp.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 #include <net/ip.h>
+#include <net/udp_tunnel.h>
+#include <net/sock.h>
 
 MODULE_LICENSE("GPL v2");
+
+#define RTRD_PORT 12345
 
 #define RTRD_DBG(fmt, ...)                                             \
 	do {                                                           \
@@ -20,14 +26,72 @@ MODULE_LICENSE("GPL v2");
 
 struct rtrd_priv {
 	struct mutex lock;
+	struct net *net;
 };
+
+static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
+{
+	RTRD_DBG("hello world");
+	return 0;
+}
+
+static int rtrd_socket_init(struct rtrd_priv *priv)
+{
+	struct net *net;
+	int ret;
+
+	struct udp_tunnel_sock_cfg cfg = {
+		.sk_user_data = priv,
+		.encap_type = 1,
+		.encap_rcv = rtrd_rcv,
+	};
+	struct udp_port_cfg port = {
+		.family = AF_INET,
+		.local_ip.s_addr = htonl(INADDR_ANY),
+		.local_udp_port = htons(RTRD_PORT),
+		.use_udp_checksums = true,
+	};
+	struct socket *sock = NULL;
+
+	mutex_lock(&priv->lock);
+
+	net = priv->net;
+	if (!net) {
+		RTRD_DBG("NULL net");
+		ret = -ENOENT;
+		goto out;
+	}
+
+	ret = udp_sock_create(net, &port, &sock);
+	if (ret < 0) {
+		RTRD_DBG("Could not create socket");
+		goto out;
+	}
+	sock->sk->sk_allocation = GFP_ATOMIC;
+	sock->sk->sk_sndbuf = INT_MAX;
+	sk_set_memalloc(sock->sk);
+	setup_udp_tunnel_sock(net, sock, &cfg);
+
+	ret = 0;
+out:
+	mutex_unlock(&priv->lock);
+	return ret;
+}
 
 static int rtrd_open(struct net_device *dev)
 {
-	RTRD_DBG("Device opened: %s", dev->name);
+	struct rtrd_priv *priv = netdev_priv(dev);
+	int ret;
+
+	ret = rtrd_socket_init(priv);
+	if (ret < 0) {
+		return ret;
+	}
 
 	netif_carrier_on(dev);
 	netif_start_queue(dev);
+
+	RTRD_DBG("Device opened: %s", dev->name);
 
 	return 0;
 }
@@ -95,6 +159,7 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 	struct rtrd_priv *priv = netdev_priv(dev);
 
 	mutex_init(&priv->lock);
+	priv->net = src_net;
 
 	RTRD_DBG("Creating new device: %s", dev->name);
 
