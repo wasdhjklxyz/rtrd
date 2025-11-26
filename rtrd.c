@@ -57,6 +57,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* NOTE: Only for educational purposes - this sucks */
 	rx_skb = skb_clone(skb, GFP_ATOMIC);
 	if (rx_skb) {
+		iph = ip_hdr(rx_skb);
 		tmp_addr = iph->saddr;
 		iph->saddr = iph->daddr;
 		iph->daddr = tmp_addr;
@@ -64,14 +65,12 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		ip_send_check(iph);
 
 		if (iph->protocol == IPPROTO_ICMP) {
-			icmph = icmp_hdr(skb);
-			RTRD_DBG("ICMP");
+			icmph = icmp_hdr(rx_skb);
 			if (icmph->type == ICMP_ECHO) {
 				icmph->type = ICMP_ECHOREPLY;
 				icmph->checksum = 0;
 				icmph->checksum = ip_compute_csum(
-					icmph, skb->len - ip_hdrlen(skb));
-				RTRD_DBG("ICMP ECHO");
+					icmph, rx_skb->len - ip_hdrlen(rx_skb));
 			}
 		}
 
