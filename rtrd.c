@@ -162,6 +162,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct socket *sock;
 	struct rtable *rt;
 	u8 tos;
+	int needed_headroom;
 
 	struct iphdr *iph = ip_hdr(skb);
 	struct rtrd_priv *priv = netdev_priv(dev);
@@ -175,6 +176,15 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (!sock) {
 		rcu_read_unlock_bh();
 		RTRD_DBG("Socket not initialized");
+		goto drop;
+	}
+
+	needed_headroom = LL_RESERVED_SPACE(skb->dev) + sizeof(struct iphdr) +
+			  sizeof(struct udphdr);
+
+	if (skb_cow_head(skb, needed_headroom)) {
+		rcu_read_unlock_bh();
+		RTRD_DBG("No headroom");
 		goto drop;
 	}
 
@@ -235,7 +245,9 @@ static void rtrd_setup(struct net_device *dev)
 	dev->hw_features |= RTRD_NETDEV_FEATURES;
 	dev->hw_enc_features |= RTRD_NETDEV_FEATURES;
 	dev->lltx = true;
-	dev->mtu = 1420;
+	dev->mtu = ETH_DATA_LEN - sizeof(struct iphdr) - sizeof(struct udphdr);
+	dev->needed_headroom =
+		LL_MAX_HEADER + sizeof(struct iphdr) + sizeof(struct udphdr);
 
 	SET_NETDEV_DEVTYPE(dev, &rtrd_device_type);
 
