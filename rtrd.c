@@ -36,7 +36,37 @@ struct rtrd_priv {
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
 {
-	RTRD_DBG("hello world");
+	struct rtrd_priv *priv;
+	struct net_device *dev;
+	struct udphdr *udp;
+	struct iphdr *iph;
+	size_t off;
+
+	priv = rcu_dereference_sk_user_data(sk);
+	if (!priv) {
+		RTRD_DBG("NULL user data");
+		kfree_skb(skb);
+		return 0;
+	}
+
+	dev = priv->dev;
+
+	udp = udp_hdr(skb);
+	off = (u8 *)udp + sizeof(struct udphdr) - skb->data;
+
+	__skb_pull(skb, off);
+	skb_reset_network_header(skb);
+
+	skb->dev = dev;
+	skb->protocol = htons(ETH_P_IP);
+	skb->pkt_type = PACKET_HOST;
+
+	iph = ip_hdr(skb);
+	RTRD_DBG("RX: proto=%u, src=%pI4, dst=%pI4, len=%u", skb->protocol,
+		 &iph->saddr, &iph->daddr, skb->len);
+
+	netif_rx(skb);
+
 	return 0;
 }
 
