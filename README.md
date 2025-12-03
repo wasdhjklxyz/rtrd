@@ -35,34 +35,36 @@ make KDIR=/path/to/linux-src
 # Manual setup
 insmod rtrd.ko
 ip link add rtrd0 type rtrd
-echo "192.0.2.3" > /sys/class/net/rtrd0/peer
-ip addr add 10.0.0.2/24 dev rtrd0
+echo "203.0.113.2" > /sys/class/net/rtrd0/peer
+ip addr add 10.0.0.1/24 dev rtrd0
 ip link set rtrd0 up
+ip route add default via 192.0.2.1
+ip route add 172.16.0.0/24 via 10.0.0.2 dev rtrd0
 
 # Or use test script
-./scripts/test.sh 10.0.0.2 192.0.2.3
+./scripts/test.sh client
 ```
 
-#### Machine B (192.0.2.3)
+#### Machine B (203.0.113.2)
 ```sh
 # Manual setup
 insmod rtrd.ko
 ip link add rtrd0 type rtrd
 echo "192.0.2.2" > /sys/class/net/rtrd0/peer
-ip addr add 10.0.0.3/24 dev rtrd0
+ip addr add 10.0.0.2/24 dev rtrd0
 ip link set rtrd0 up
+ip route add default via 203.0.113.1
+ip addr add 172.16.0.1/24 dev lo
+echo 1 > /proc/sys/net/ipv4/ip_forward
 
 # Or use test script
-./scripts/test.sh 10.0.0.3 192.0.2.2
+./scripts/test.sh peer
 ```
 
 ### Test
 ```sh
 # From Machine A
-ping 10.0.0.3
-
-# From Machine B
-ping 10.0.0.2
+ping 172.16.0.1
 ```
 
 ## Configuration
