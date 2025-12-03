@@ -171,14 +171,13 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (!sock) {
 		rcu_read_unlock_bh();
 		RTRD_DBG("Socket not initialized");
-		dev_kfree_skb(skb);
-		return -ENOENT;
+		goto drop;
 	}
 
 	rcu_read_unlock_bh();
-
+	return NETDEV_TX_OK;
+drop:
 	dev_kfree_skb(skb);
-
 	return NETDEV_TX_OK;
 }
 
