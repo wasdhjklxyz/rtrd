@@ -179,7 +179,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto drop;
 	}
 
-	needed_headroom = LL_RESERVED_SPACE(skb->dev) + sizeof(struct iphdr) +
+	needed_headroom = LL_RESERVED_SPACE(dev) + sizeof(struct iphdr) +
 			  sizeof(struct udphdr);
 
 	if (skb_cow_head(skb, needed_headroom)) {
