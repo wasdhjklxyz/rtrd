@@ -15,6 +15,7 @@
 #include <net/ip.h>
 #include <net/udp_tunnel.h>
 #include <net/sock.h>
+#include <net/route.h>
 
 MODULE_LICENSE("GPL v2");
 
@@ -159,9 +160,12 @@ static int rtrd_stop(struct net_device *dev)
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct socket *sock;
+	struct rtable *rt;
+	u8 tos;
 
 	struct iphdr *iph = ip_hdr(skb);
 	struct rtrd_priv *priv = netdev_priv(dev);
+	struct flowi4 fl = { 0 };
 
 	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
 		 &iph->saddr, &iph->daddr, skb->len);
@@ -173,6 +177,29 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		RTRD_DBG("Socket not initialized");
 		goto drop;
 	}
+
+	/* FIXME: Hardcoded IP for testing. This should be configuration opt */
+	__be32 peer_ip = htonl(0xC0000204); // 192.0.2.4
+
+	fl.saddr = 0; // Let kernel choose source
+	fl.daddr = peer_ip;
+	fl.fl4_dport = htons(RTRD_PORT);
+	fl.flowi4_proto = IPPROTO_UDP;
+
+	rt = ip_route_output_flow(sock_net(sock->sk), &fl, sock->sk);
+	if (IS_ERR(rt)) {
+		rcu_read_unlock_bh();
+		RTRD_DBG("Route lookup failed");
+		goto drop;
+	}
+
+	tos = ip_tunnel_get_dsfield(iph, skb);
+
+	skb->ignore_df = 1;
+	udp_tunnel_xmit_skb(rt, sock->sk, skb, fl.saddr, fl.daddr, tos,
+			    ip4_dst_hoplimit(&rt->dst), 0,
+			    inet_sk(sock->sk)->inet_sport, htons(RTRD_PORT),
+			    false, false);
 
 	rcu_read_unlock_bh();
 	return NETDEV_TX_OK;
