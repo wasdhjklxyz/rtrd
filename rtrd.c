@@ -31,6 +31,7 @@ struct rtrd_priv {
 	struct mutex lock;
 	struct net __rcu *net;
 	struct socket __rcu *sock;
+	struct net_device *dev;
 };
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
@@ -253,6 +254,7 @@ static void rtrd_setup(struct net_device *dev)
 
 	memset(priv, 0, sizeof(struct rtrd_priv));
 	mutex_init(&priv->lock);
+	priv->dev = dev;
 }
 
 static int rtrd_newlink(struct net *src_net, struct net_device *dev,
