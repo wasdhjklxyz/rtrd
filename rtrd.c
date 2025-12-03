@@ -4,12 +4,13 @@
 #include <linux/gfp_types.h>
 #include <linux/skbuff.h>
 #include <linux/if_arp.h>
-#include <linux/netdevice.h>
+#include <linux/device.h>
 #include <linux/mutex.h>
 #include <linux/in.h>
 #include <linux/udp.h>
 #include <linux/compiler_types.h>
 #include <linux/rcupdate.h>
+#include <linux/inet.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 #include <net/ip.h>
@@ -34,6 +35,60 @@ struct rtrd_priv {
 	struct net_device *dev;
 	__be32 peer_addr;
 	__be16 peer_port;
+};
+
+static ssize_t peer_show(struct device *d, struct device_attribute *attr,
+			 char *buf)
+{
+	struct net_device *dev = to_net_dev(d);
+	struct rtrd_priv *priv = netdev_priv(dev);
+
+	if (priv->peer_addr == 0)
+		return sprintf(buf, "(none)\n");
+
+	return sprintf(buf, "%pI4:%u\n", &priv->peer_addr,
+		       ntohs(priv->peer_port));
+}
+
+static ssize_t peer_store(struct device *dev, struct device_attribute *attr,
+			  const char *buf, size_t len)
+{
+	struct net_device *ndev = to_net_dev(dev);
+	struct rtrd_priv *priv = netdev_priv(ndev);
+	__be32 addr;
+	u16 port = RTRD_PORT;
+	char ip_str[64];
+	int ret;
+
+	/* Parse "IP:PORT" or just "IP" */
+	ret = sscanf(buf, "%63[^:]:%hu", ip_str, &port);
+	if (ret < 1) {
+		RTRD_DBG("Failed to parse peer IP:PORT");
+		return -EINVAL;
+	}
+
+	if (in4_pton(ip_str, -1, (u8 *)&addr, -1, NULL) == 0) {
+		RTRD_DBG("Failed to convert peer IP:PORT");
+		return -EINVAL;
+	}
+
+	priv->peer_addr = addr;
+	priv->peer_port = htons(port);
+
+	RTRD_DBG("%s peer set to %pI4:%u\n", ndev->name, &addr, port);
+
+	return len;
+}
+
+static DEVICE_ATTR_RW(peer);
+
+static struct attribute *rtrd_attrs[] = {
+	&dev_attr_peer.attr,
+	NULL,
+};
+
+static const struct attribute_group rtrd_attr_group = {
+	.attrs = rtrd_attrs,
 };
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
@@ -293,15 +348,29 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 			struct netlink_ext_ack *extack)
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
+	int ret;
 
 	rcu_assign_pointer(priv->net, src_net);
 	priv->dev = dev;
 	priv->peer_addr = 0;
 	priv->peer_port = htons(RTRD_PORT);
 
-	RTRD_DBG("Creating new device: %s", dev->name);
+	ret = register_netdevice(dev);
+	if (ret < 0) {
+		RTRD_DBG("Failed to register device");
+		return ret;
+	}
 
-	return register_netdevice(dev);
+	ret = sysfs_create_group(&dev->dev.kobj, &rtrd_attr_group);
+	if (ret < 0) {
+		RTRD_DBG("Failed to create sysfs group");
+		unregister_netdevice(dev);
+		return ret;
+	}
+
+	RTRD_DBG("Created %s", dev->name);
+
+	return 0;
 }
 
 static void rtrd_dellink(struct net_device *dev, struct list_head *head)
@@ -309,6 +378,8 @@ static void rtrd_dellink(struct net_device *dev, struct list_head *head)
 	struct rtrd_priv *priv = netdev_priv(dev);
 
 	RTRD_DBG("Deleting device: %s", dev->name);
+
+	sysfs_remove_group(&dev->dev.kobj, &rtrd_attr_group);
 
 	rtrd_socket_uninit(priv);
 
