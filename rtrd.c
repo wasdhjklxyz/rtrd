@@ -247,6 +247,7 @@ static void rtrd_setup(struct net_device *dev)
 	dev->mtu = ETH_DATA_LEN - sizeof(struct iphdr) - sizeof(struct udphdr);
 	dev->needed_headroom =
 		LL_MAX_HEADER + sizeof(struct iphdr) + sizeof(struct udphdr);
+	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 
 	SET_NETDEV_DEVTYPE(dev, &rtrd_device_type);
 
