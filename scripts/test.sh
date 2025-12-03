@@ -8,5 +8,5 @@ rmmod $MODULE 2>/dev/null || true
 
 insmod /mnt/host/${MODULE}.ko
 ip link add $IFACE type $MODULE
-ip addr add 10.0.0.1/24 dev $IFACE
+ip addr add 10.0.0.$1/24 dev $IFACE
 ip link set $IFACE up
