@@ -251,6 +251,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct rtable *rt;
 	u8 tos;
 	int needed_headroom;
+	__be32 peer_ip;
 
 	struct iphdr *iph = ip_hdr(skb);
 	struct rtrd_priv *priv = netdev_priv(dev);
@@ -258,6 +259,12 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
 		 &iph->saddr, &iph->daddr, skb->len);
+
+	peer_ip = priv->peer_addr;
+	if (!peer_ip) {
+		RTRD_DBG("No peer configured for %s", dev->name);
+		goto drop;
+	}
 
 	rcu_read_lock_bh();
 	sock = rcu_dereference_bh(priv->sock);
@@ -276,11 +283,8 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto drop;
 	}
 
-	/* FIXME: Hardcoded IP for testing. This should be configuration opt */
-	__be32 peer_ip = htonl(0xC0000204); // 192.0.2.4
-
 	fl.daddr = peer_ip;
-	fl.fl4_dport = htons(RTRD_PORT);
+	fl.fl4_dport = priv->peer_port;
 	fl.flowi4_proto = IPPROTO_UDP;
 
 	rt = ip_route_output_flow(sock_net(sock->sk), &fl, sock->sk);
@@ -295,7 +299,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb->ignore_df = 1;
 	udp_tunnel_xmit_skb(rt, sock->sk, skb, fl.saddr, fl.daddr, tos,
 			    ip4_dst_hoplimit(&rt->dst), 0,
-			    inet_sk(sock->sk)->inet_sport, htons(RTRD_PORT),
+			    inet_sk(sock->sk)->inet_sport, priv->peer_port,
 			    false, false);
 
 	rcu_read_unlock_bh();
