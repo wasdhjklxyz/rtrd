@@ -191,7 +191,6 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* FIXME: Hardcoded IP for testing. This should be configuration opt */
 	__be32 peer_ip = htonl(0xC0000204); // 192.0.2.4
 
-	fl.saddr = 0; // Let kernel choose source
 	fl.daddr = peer_ip;
 	fl.fl4_dport = htons(RTRD_PORT);
 	fl.flowi4_proto = IPPROTO_UDP;
