@@ -32,6 +32,8 @@ struct rtrd_priv {
 	struct net __rcu *net;
 	struct socket __rcu *sock;
 	struct net_device *dev;
+	__be32 peer_addr;
+	__be16 peer_port;
 };
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
@@ -284,7 +286,6 @@ static void rtrd_setup(struct net_device *dev)
 
 	memset(priv, 0, sizeof(struct rtrd_priv));
 	mutex_init(&priv->lock);
-	priv->dev = dev;
 }
 
 static int rtrd_newlink(struct net *src_net, struct net_device *dev,
@@ -294,6 +295,9 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 	struct rtrd_priv *priv = netdev_priv(dev);
 
 	rcu_assign_pointer(priv->net, src_net);
+	priv->dev = dev;
+	priv->peer_addr = 0;
+	priv->peer_port = htons(RTRD_PORT);
 
 	RTRD_DBG("Creating new device: %s", dev->name);
 
