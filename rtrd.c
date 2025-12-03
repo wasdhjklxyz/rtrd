@@ -430,4 +430,4 @@ module_exit(rtrd_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("uiop <uiop@wasdhjkl.xyz>");
 MODULE_DESCRIPTION("Rudimentary P2P UDP tunnel driver");
-MODULE_VERSION("0.0");
+MODULE_VERSION("0.1");
