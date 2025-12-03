@@ -8,6 +8,8 @@
 #include <linux/mutex.h>
 #include <linux/in.h>
 #include <linux/udp.h>
+#include <linux/compiler_types.h>
+#include <linux/rcupdate.h>
 #include <net/ip_tunnels.h>
 #include <net/rtnetlink.h>
 #include <net/ip.h>
@@ -26,8 +28,8 @@ MODULE_LICENSE("GPL v2");
 
 struct rtrd_priv {
 	struct mutex lock;
-	struct net *net;
-	struct socket *sock;
+	struct net __rcu *net;
+	struct socket __rcu *sock;
 };
 
 static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
@@ -36,9 +38,22 @@ static int rtrd_rcv(struct sock *sk, struct sk_buff *skb)
 	return 0;
 }
 
+static void rtrd_socket_free(struct socket *sock)
+{
+	if (!sock) {
+		return;
+	}
+	if (sock->sk) {
+		sk_clear_memalloc(sock->sk);
+		udp_tunnel_sock_release(sock->sk->sk_socket);
+	}
+}
+
 static int rtrd_socket_init(struct rtrd_priv *priv)
 {
 	struct net *net;
+	struct socket *sock = NULL;
+	struct socket *old_sock;
 	int ret;
 
 	struct udp_tunnel_sock_cfg cfg = {
@@ -55,27 +70,58 @@ static int rtrd_socket_init(struct rtrd_priv *priv)
 
 	mutex_lock(&priv->lock);
 
-	net = priv->net;
+	rcu_read_lock();
+	net = rcu_dereference(priv->net);
 	if (!net) {
+		rcu_read_unlock();
 		RTRD_DBG("NULL net");
 		ret = -ENOENT;
 		goto out;
 	}
 
-	ret = udp_sock_create(net, &port, &priv->sock);
+	ret = udp_sock_create(net, &port, &sock);
+	rcu_read_unlock();
 	if (ret < 0) {
 		RTRD_DBG("Could not create socket");
 		goto out;
 	}
-	priv->sock->sk->sk_allocation = GFP_ATOMIC;
-	priv->sock->sk->sk_sndbuf = INT_MAX;
-	sk_set_memalloc(priv->sock->sk);
-	setup_udp_tunnel_sock(net, priv->sock, &cfg);
+
+	sock->sk->sk_allocation = GFP_ATOMIC;
+	sock->sk->sk_sndbuf = INT_MAX;
+	sk_set_memalloc(sock->sk);
+	setup_udp_tunnel_sock(net, sock, &cfg);
+
+	old_sock = rcu_dereference_protected(priv->sock,
+					     lockdep_is_held(&priv->lock));
+	rcu_assign_pointer(priv->sock, sock);
+
+	if (old_sock) {
+		synchronize_rcu();
+		rtrd_socket_free(old_sock);
+	}
 
 	ret = 0;
 out:
 	mutex_unlock(&priv->lock);
 	return ret;
+}
+
+static void rtrd_socket_uninit(struct rtrd_priv *priv)
+{
+	struct socket *sock;
+
+	mutex_lock(&priv->lock);
+
+	sock = rcu_dereference_protected(priv->sock,
+					 lockdep_is_held(&priv->lock));
+	rcu_assign_pointer(priv->sock, NULL);
+
+	mutex_unlock(&priv->lock);
+
+	if (sock) {
+		synchronize_rcu();
+		rtrd_socket_free(sock);
+	}
 }
 
 static int rtrd_open(struct net_device *dev)
@@ -98,10 +144,14 @@ static int rtrd_open(struct net_device *dev)
 
 static int rtrd_stop(struct net_device *dev)
 {
+	struct rtrd_priv *priv = netdev_priv(dev);
+
 	RTRD_DBG("Device stopped: %s", dev->name);
 
 	netif_carrier_off(dev);
 	netif_stop_queue(dev);
+
+	rtrd_socket_uninit(priv);
 
 	return 0;
 }
@@ -116,12 +166,16 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	RTRD_DBG("TX: proto=%u, src=%pI4, dst=%pI4, len=%u", iph->protocol,
 		 &iph->saddr, &iph->daddr, skb->len);
 
-	sock = priv->sock;
+	rcu_read_lock_bh();
+	sock = rcu_dereference_bh(priv->sock);
 	if (!sock) {
+		rcu_read_unlock_bh();
 		RTRD_DBG("Socket not initialized");
 		dev_kfree_skb(skb);
 		return -ENOENT;
 	}
+
+	rcu_read_unlock_bh();
 
 	dev_kfree_skb(skb);
 
@@ -160,6 +214,7 @@ static void rtrd_setup(struct net_device *dev)
 	SET_NETDEV_DEVTYPE(dev, &rtrd_device_type);
 
 	memset(priv, 0, sizeof(struct rtrd_priv));
+	mutex_init(&priv->lock);
 }
 
 static int rtrd_newlink(struct net *src_net, struct net_device *dev,
@@ -168,8 +223,7 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
 
-	mutex_init(&priv->lock);
-	priv->net = src_net;
+	rcu_assign_pointer(priv->net, src_net);
 
 	RTRD_DBG("Creating new device: %s", dev->name);
 
@@ -178,7 +232,13 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 
 static void rtrd_dellink(struct net_device *dev, struct list_head *head)
 {
+	struct rtrd_priv *priv = netdev_priv(dev);
+
 	RTRD_DBG("Deleting device: %s", dev->name);
+
+	rtrd_socket_uninit(priv);
+
+	rcu_assign_pointer(priv->net, NULL);
 
 	unregister_netdevice_queue(dev, head);
 }
