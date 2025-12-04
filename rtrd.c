@@ -48,7 +48,47 @@ struct rtrd_priv {
 	__be16 peer_port;
 	u8 publ[RTRD_KEY_LEN];
 	u8 priv[RTRD_KEY_LEN];
+	u8 peer_publ[RTRD_KEY_LEN];
 };
+
+static ssize_t peer_publ_read(struct file *filp, struct kobject *kobj,
+			      struct bin_attribute *attr, char *buf, loff_t off,
+			      size_t count)
+{
+	struct device *dev = kobj_to_dev(kobj);
+	struct net_device *ndev = to_net_dev(dev);
+	struct rtrd_priv *priv = netdev_priv(ndev);
+
+	if (off >= RTRD_KEY_LEN) {
+		RTRD_DBG("error: offset >= RTRD_KEY_LEN");
+		return 0;
+	}
+
+	if (off + count > RTRD_KEY_LEN) {
+		RTRD_DBG("warn: truncated peer public key");
+		count = RTRD_KEY_LEN - off;
+	}
+
+	memcpy(buf, priv->peer_publ + off, count);
+	return count;
+}
+
+static ssize_t peer_publ_write(struct file *filp, struct kobject *kobj,
+			       struct bin_attribute *attr, char *buf,
+			       loff_t off, size_t count)
+{
+	struct device *dev = kobj_to_dev(kobj);
+	struct net_device *ndev = to_net_dev(dev);
+	struct rtrd_priv *priv = netdev_priv(ndev);
+
+	if (off != 0 || count != RTRD_KEY_LEN) {
+		RTRD_DBG("error: invalid peer public key len");
+		return -EINVAL;
+	}
+
+	memcpy(priv->peer_publ, buf, RTRD_KEY_LEN);
+	return count;
+}
 
 static ssize_t publ_read(struct file *filp, struct kobject *kobj,
 			 struct bin_attribute *attr, char *buf, loff_t off,
@@ -172,6 +212,7 @@ static ssize_t peer_store(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR_RW(peer);
 static BIN_ATTR_RW(publ, RTRD_KEY_LEN);
 static BIN_ATTR_RW(priv, RTRD_KEY_LEN);
+static BIN_ATTR_RW(peer_publ, RTRD_KEY_LEN);
 
 static struct attribute *rtrd_attrs[] = {
 	&dev_attr_peer.attr,
@@ -181,6 +222,7 @@ static struct attribute *rtrd_attrs[] = {
 static struct bin_attribute *rtrd_bin_attrs[] = {
 	&bin_attr_publ,
 	&bin_attr_priv,
+	&bin_attr_peer_publ,
 	NULL,
 };
 
