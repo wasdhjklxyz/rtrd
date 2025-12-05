@@ -39,16 +39,21 @@
 		printk(KERN_INFO "rtrd: " fmt "\n", ##__VA_ARGS__); \
 	} while (0)
 
+struct rtrd_peer {
+	u8 static_publ[RTRD_KEY_LEN];
+	u8 ephemeral_publ[RTRD_KEY_LEN];
+	__be32 addr;
+	__be16 port;
+};
+
 struct rtrd_priv {
 	struct mutex lock;
 	struct net __rcu *net;
 	struct socket __rcu *sock;
 	struct net_device *dev;
-	__be32 peer_addr;
-	__be16 peer_port;
+	struct rtrd_peer peer;
 	u8 publ[RTRD_KEY_LEN];
 	u8 priv[RTRD_KEY_LEN];
-	u8 peer_publ[RTRD_KEY_LEN];
 };
 
 static ssize_t peer_publ_read(struct file *filp, struct kobject *kobj,
@@ -58,6 +63,7 @@ static ssize_t peer_publ_read(struct file *filp, struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct net_device *ndev = to_net_dev(dev);
 	struct rtrd_priv *priv = netdev_priv(ndev);
+	struct rtrd_peer *peer = &priv->peer;
 
 	if (off >= RTRD_KEY_LEN) {
 		RTRD_DBG("error: offset >= RTRD_KEY_LEN");
@@ -69,7 +75,7 @@ static ssize_t peer_publ_read(struct file *filp, struct kobject *kobj,
 		count = RTRD_KEY_LEN - off;
 	}
 
-	memcpy(buf, priv->peer_publ + off, count);
+	memcpy(buf, peer->static_publ + off, count);
 	return count;
 }
 
@@ -80,13 +86,14 @@ static ssize_t peer_publ_write(struct file *filp, struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct net_device *ndev = to_net_dev(dev);
 	struct rtrd_priv *priv = netdev_priv(ndev);
+	struct rtrd_peer *peer = &priv->peer;
 
 	if (off != 0 || count != RTRD_KEY_LEN) {
 		RTRD_DBG("error: invalid peer public key len");
 		return -EINVAL;
 	}
 
-	memcpy(priv->peer_publ, buf, RTRD_KEY_LEN);
+	memcpy(peer->static_publ, buf, RTRD_KEY_LEN);
 	return count;
 }
 
@@ -173,12 +180,12 @@ static ssize_t peer_show(struct device *d, struct device_attribute *attr,
 {
 	struct net_device *dev = to_net_dev(d);
 	struct rtrd_priv *priv = netdev_priv(dev);
+	struct rtrd_peer *peer = &priv->peer;
 
-	if (priv->peer_addr == 0)
+	if (peer->addr == 0)
 		return sprintf(buf, "(none)\n");
 
-	return sprintf(buf, "%pI4:%u\n", &priv->peer_addr,
-		       ntohs(priv->peer_port));
+	return sprintf(buf, "%pI4:%u\n", &peer->addr, ntohs(peer->port));
 }
 
 static ssize_t peer_store(struct device *dev, struct device_attribute *attr,
@@ -186,6 +193,7 @@ static ssize_t peer_store(struct device *dev, struct device_attribute *attr,
 {
 	struct net_device *ndev = to_net_dev(dev);
 	struct rtrd_priv *priv = netdev_priv(ndev);
+	struct rtrd_peer *peer = &priv->peer;
 	__be32 addr;
 	u16 port = RTRD_PORT;
 	char ip_str[64];
@@ -203,8 +211,8 @@ static ssize_t peer_store(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	priv->peer_addr = addr;
-	priv->peer_port = htons(port);
+	peer->addr = addr;
+	peer->port = htons(port);
 
 	return len;
 }
@@ -360,6 +368,7 @@ static void rtrd_socket_uninit(struct rtrd_priv *priv)
 static int rtrd_open(struct net_device *dev)
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
+	struct rtrd_peer *peer = &priv->peer;
 	int ret;
 
 	ret = rtrd_socket_init(priv);
@@ -370,8 +379,8 @@ static int rtrd_open(struct net_device *dev)
 	netif_carrier_on(dev);
 	netif_start_queue(dev);
 
-	RTRD_LOG("device %s opened (peer: %pI4:%u)", dev->name,
-		 &priv->peer_addr, ntohs(priv->peer_port));
+	RTRD_LOG("device %s opened (peer: %pI4:%u)", dev->name, &peer->addr,
+		 ntohs(peer->port));
 
 	return 0;
 }
@@ -400,12 +409,13 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	struct iphdr *iph = ip_hdr(skb);
 	struct rtrd_priv *priv = netdev_priv(dev);
+	struct rtrd_peer *peer = &priv->peer;
 	struct flowi4 fl = { 0 };
 
 	RTRD_LOG("[TX-TUN] %pI4 -> %pI4 (%u bytes)", &iph->saddr, &iph->daddr,
 		 skb->len);
 
-	peer_ip = priv->peer_addr;
+	peer_ip = peer->addr;
 	if (!peer_ip) {
 		RTRD_DBG("no peer configured for %s", dev->name);
 		goto drop;
@@ -429,7 +439,7 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	fl.daddr = peer_ip;
-	fl.fl4_dport = priv->peer_port;
+	fl.fl4_dport = peer->port;
 	fl.flowi4_proto = IPPROTO_UDP;
 
 	rt = ip_route_output_flow(sock_net(sock->sk), &fl, sock->sk);
@@ -442,14 +452,14 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	tos = ip_tunnel_get_dsfield(iph, skb);
 
 	RTRD_LOG("[TX-ENC] %pI4:%u → %pI4:%u (%lu bytes)", &fl.saddr,
-		 inet_sk(sock->sk)->inet_sport, &fl.daddr, priv->peer_port,
+		 inet_sk(sock->sk)->inet_sport, &fl.daddr, peer->port,
 		 skb->len + sizeof(struct iphdr) + sizeof(struct udphdr));
 
 	skb->ignore_df = 1;
 	udp_tunnel_xmit_skb(rt, sock->sk, skb, fl.saddr, fl.daddr, tos,
 			    ip4_dst_hoplimit(&rt->dst), 0,
-			    inet_sk(sock->sk)->inet_sport, priv->peer_port,
-			    false, false);
+			    inet_sk(sock->sk)->inet_sport, peer->port, false,
+			    false);
 
 	rcu_read_unlock_bh();
 	return NETDEV_TX_OK;
@@ -501,12 +511,13 @@ static int rtrd_newlink(struct net *src_net, struct net_device *dev,
 			struct netlink_ext_ack *extack)
 {
 	struct rtrd_priv *priv = netdev_priv(dev);
+	struct rtrd_peer *peer = &priv->peer;
 	int ret;
 
 	rcu_assign_pointer(priv->net, src_net);
 	priv->dev = dev;
-	priv->peer_addr = 0;
-	priv->peer_port = htons(RTRD_PORT);
+	peer->addr = 0;
+	peer->port = htons(RTRD_PORT);
 
 	ret = register_netdevice(dev);
 	if (ret < 0) {
