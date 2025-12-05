@@ -24,6 +24,8 @@
 #include <net/sock.h>
 #include <net/route.h>
 #include <crypto/curve25519.h>
+#include <crypto/blake2s.h>
+#include <crypto/chacha20poly1305.h>
 
 #define RTRD_PORT 12345
 #define RTRD_KEY_LEN CURVE25519_KEY_SIZE
@@ -55,6 +57,18 @@ struct rtrd_priv {
 	u8 publ[RTRD_KEY_LEN];
 	u8 priv[RTRD_KEY_LEN];
 };
+
+enum {
+	RTRD_MSG_INVALID,
+	RTRD_MSG_INIT,
+	RTRD_MSG_RESP,
+	RTRD_MSG_DATA,
+};
+
+struct rtrd_msg_hs {
+	u8 type;
+	u8
+} __packed;
 
 static ssize_t peer_publ_read(struct file *filp, struct kobject *kobj,
 			      struct bin_attribute *attr, char *buf, loff_t off,
@@ -399,6 +413,19 @@ static int rtrd_stop(struct net_device *dev)
 	return 0;
 }
 
+static void rtrd_do_ecdh(struct rtrd_priv *priv)
+{
+	struct rtrd_peer *peer = &priv->peer;
+	struct blake2s_state b2s;
+	u8 sec[RTRD_KEY_LEN];
+
+	curve25519_arch(sec, priv->priv, peer->static_publ);
+
+	blake2s_init(&b2s, RTRD_KEY_LEN);
+	blake2s_update(&b2s, sec, RTRD_KEY_LEN);
+	blake2s_final(&b2s, peer->ephemeral_publ);
+}
+
 static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct socket *sock;
@@ -411,6 +438,8 @@ static netdev_tx_t rtrd_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct rtrd_priv *priv = netdev_priv(dev);
 	struct rtrd_peer *peer = &priv->peer;
 	struct flowi4 fl = { 0 };
+
+	/* TODO: State of communication */
 
 	RTRD_LOG("[TX-TUN] %pI4 -> %pI4 (%u bytes)", &iph->saddr, &iph->daddr,
 		 skb->len);
