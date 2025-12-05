@@ -39,3 +39,6 @@ elif [ "$ROLE" = "peer" ]; then
   ip addr add 172.16.0.1/24 dev lo
   echo 1 > /proc/sys/net/ipv4/ip_forward
 fi
+
+dd if=/dev/urandom of=/sys/class/net/rtrd0/publ bs=32 count=1
+dd if=/dev/urandom of=/sys/class/net/rtrd0/priv bs=32 count=1
