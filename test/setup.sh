@@ -34,11 +34,13 @@ ip link set $IFACE up
 if [ "$ROLE" = "client" ]; then
   ip route add default via 192.0.2.1
   ip route add 172.16.0.0/24 via 10.0.0.2 dev $IFACE
+  base64 -d /mnt/host/${MODULE}/test/keys/peer.pub > /sys/class/net/rtrd0/peer_publ
 elif [ "$ROLE" = "peer" ]; then
   ip route add default via 203.0.113.1
   ip addr add 172.16.0.1/24 dev lo
+  base64 -d /mnt/host/${MODULE}/test/keys/client.pub > /sys/class/net/rtrd0/peer_publ
   echo 1 > /proc/sys/net/ipv4/ip_forward
 fi
 
-dd if=/dev/urandom of=/sys/class/net/rtrd0/publ bs=32 count=1
-dd if=/dev/urandom of=/sys/class/net/rtrd0/priv bs=32 count=1
+base64 -d /mnt/host/${MODULE}/test/keys/${ROLE} > /sys/class/net/rtrd0/priv
+base64 -d /mnt/host/${MODULE}/test/keys/${ROLE}.pub > /sys/class/net/rtrd0/publ
